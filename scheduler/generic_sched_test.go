@@ -1962,9 +1962,10 @@ func TestServiceSched_JobModify(t *testing.T) {
 
 	// Ensure all allocations placed
 	out, _ = structs.FilterTerminalAllocs(out)
-	if len(out) != 10 {
-		t.Fatalf("bad: %#v", out)
-	}
+	must.Len(t, 10, out, must.Sprint("expected 10 non-terminal allocs"))
+	// if len(out) != 10 {
+	// 	t.Fatalf("bad: %#v", out)
+	// }
 
 	h.AssertEvalStatus(t, structs.EvalStatusComplete)
 }
@@ -3731,6 +3732,7 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			fmt.Println("--------------------------------------")
 			h := NewHarness(t)
 
 			// Node, which is down
@@ -3795,7 +3797,7 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 			alloc, err = h.State.AllocByID(nil, alloc.ID)
 			must.NoError(t, err)
 
-			// Allocations have been transitioned to lost
+			// Allocation have been transitioned to lost
 			must.Eq(t, structs.AllocDesiredStatusStop, alloc.DesiredStatus)
 			must.Eq(t, structs.AllocClientStatusLost, alloc.ClientStatus)
 			// At least 1, 2 if we manually set the tc.when
@@ -3807,13 +3809,13 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 				must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
 				must.NoError(t, h.Process(NewServiceScheduler, eval))
 
-				as, err := h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
+				allocs, err := h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
 				must.NoError(t, err)
-				must.Len(t, 2, as)
+				must.Len(t, 2, allocs)
 
-				a2 := as[0]
+				a2 := allocs[0]
 				if a2.ID == alloc.ID {
-					a2 = as[1]
+					a2 = allocs[1]
 				}
 
 				must.Eq(t, structs.AllocClientStatusPending, a2.ClientStatus)

@@ -40,18 +40,15 @@ func (a allocSet) XXXfilterByRescheduleable(isBatch, isDisconnecting bool, now t
 			continue
 		}
 
-		if !(alloc.FollowupEvalID == evalID && alloc.TerminalStatus()) {
+		isUntainted, ignore := shouldFilterX(alloc, isBatch)
+		if isUntainted && !isDisconnecting {
+			fmt.Printf("[*] isUntainted alloc %q\n", alloc.ID)
+			untainted[alloc.ID] = alloc
+		}
 
-			isUntainted, ignore := shouldFilterX(alloc, isBatch)
-			if isUntainted && !isDisconnecting {
-				fmt.Printf("[*] isUntainted alloc %q\n", alloc.ID)
-				untainted[alloc.ID] = alloc
-			}
-
-			if ignore {
-				fmt.Printf("[*] ignoring alloc %q\n", alloc.ID)
-				continue
-			}
+		if ignore {
+			fmt.Printf("[*] ignoring alloc %q\n", alloc.ID)
+			continue
 		}
 
 		eligibleNow, eligibleLater, rescheduleTime = updateByReschedulableX(alloc, now, evalID, deployment, isDisconnecting)
@@ -104,9 +101,7 @@ func shouldFilterX(alloc *structs.Allocation, isBatch bool) (untainted, ignore b
 	case structs.AllocDesiredStatusStop, structs.AllocDesiredStatusEvict:
 
 		if alloc.NextAllocation == "" {
-			if _, eligible := alloc.NextRescheduleTime(); eligible {
-				return false, false
-			}
+			return false, false
 		}
 
 		return false, true
@@ -143,8 +138,7 @@ func updateByReschedulableX(alloc *structs.Allocation, now time.Time, evalID str
 
 	default:
 		rescheduleTime, eligible = alloc.NextRescheduleTime()
-		fmt.Println("eligible:", eligible)
-		eligible = eligible || alloc.FollowupEvalID == evalID
+		fmt.Printf("eligible: %v\n", eligible)
 	}
 
 	if eligible && (alloc.FollowupEvalID == evalID || rescheduleTime.Sub(now) <= rescheduleWindowSize) {
