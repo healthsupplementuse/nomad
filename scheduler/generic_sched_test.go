@@ -4688,7 +4688,9 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 		h.NextIndex(), []*structs.Evaluation{eval}))
 
 	// -----------------------------------
-	// first reschedule which works as expected
+	// first reschedule which works with delay as expected
+
+	fmt.Println("[0] -------------------------------")
 
 	// Process the evaluation and assert we have a plan
 	must.NoError(t, h.Process(NewServiceScheduler, eval))
@@ -4714,7 +4716,10 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	must.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup,
 		h.NextIndex(), []*structs.Evaluation{followupEval}))
 
-	// Process the follow-up eval, which results in a replacement and stop
+	fmt.Println("[1] -------------------------------")
+
+	// Follow-up delay "expires", so process the follow-up eval, which results
+	// in a replacement and stop
 	must.NoError(t, h.Process(NewServiceScheduler, followupEval))
 	must.Len(t, 2, h.Plans)
 	must.MapLen(t, 1, h.Plans[1].NodeUpdate)     // stop
@@ -4736,7 +4741,7 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	}
 
 	// -----------------------------------
-	// second reschedule but it blocks
+	// Replacement alloc fails, second reschedule but it blocks because of delay
 
 	alloc, err = h.State.AllocByID(ws, replacementAllocID)
 	must.NoError(t, err)
@@ -4751,6 +4756,8 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	eval.ID = uuid.Generate()
 	must.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup,
 		h.NextIndex(), []*structs.Evaluation{eval}))
+
+	fmt.Println("[2] -------------------------------")
 
 	// Process the evaluation and assert we have a plan
 	must.NoError(t, h.Process(NewServiceScheduler, eval))
@@ -4779,6 +4786,8 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	node.NodeResources.Memory.MemoryMB = 200
 	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
 
+	fmt.Println("[3] -------------------------------")
+
 	// Process the follow-up eval, which results in a stop but not a replacement
 	must.NoError(t, h.Process(NewServiceScheduler, followupEval))
 	must.Len(t, 4, h.Plans)
@@ -4799,6 +4808,8 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	// "free up" resources on the node so the blocked eval will succeed
 	node.NodeResources.Memory.MemoryMB = 8000
 	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
+
+	fmt.Println("-------------------------------")
 
 	must.NoError(t, h.Process(NewServiceScheduler, blockedEval))
 	must.Len(t, 5, h.Plans)
