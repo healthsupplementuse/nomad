@@ -4787,6 +4787,7 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
 
 	fmt.Println("[3] -------------------------------")
+	fmt.Println("    alloc to replace:", replacementAllocID)
 
 	// Process the follow-up eval, which results in a stop but not a replacement
 	must.NoError(t, h.Process(NewServiceScheduler, followupEval))
@@ -4809,11 +4810,12 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 	node.NodeResources.Memory.MemoryMB = 8000
 	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
 
-	fmt.Println("-------------------------------")
+	fmt.Println("[4] -------------------------------")
+	fmt.Println("    never replaced alloc:", replacementAllocID)
 
 	must.NoError(t, h.Process(NewServiceScheduler, blockedEval))
 	must.Len(t, 5, h.Plans)
-	must.MapLen(t, 0, h.Plans[4].NodeUpdate)     // stop
+	must.MapLen(t, 1, h.Plans[4].NodeUpdate)     // stop
 	must.MapLen(t, 1, h.Plans[4].NodeAllocation) // place
 
 	out, err = h.State.AllocsByJob(ws, job.Namespace, job.ID, false)
@@ -4824,7 +4826,7 @@ func TestServiceSched_BlockedReschedule(t *testing.T) {
 		if alloc.ID != failedAllocID && alloc.ID != replacementAllocID {
 			must.NotNil(t, alloc.RescheduleTracker,
 				must.Sprint("replacement alloc should have reschedule tracker"))
-			must.Len(t, 1, alloc.RescheduleTracker.Events)
+			must.Len(t, 2, alloc.RescheduleTracker.Events)
 		}
 	}
 }

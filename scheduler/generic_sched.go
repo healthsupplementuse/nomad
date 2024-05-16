@@ -593,7 +593,7 @@ func (s *GenericScheduler) computePlacements(destructive, place []placementResul
 			stopPrevAlloc, stopPrevAllocDesc := missing.StopPreviousAlloc()
 			prevAllocation := missing.PreviousAllocation()
 			// DEBUG
-			fmt.Printf("[*] trying to place for prevAllocation: %v\n", prevAllocation)
+			//			fmt.Printf("[*] trying to place for prevAllocation: %v\n", prevAllocation)
 			if stopPrevAlloc {
 				s.plan.AppendStoppedAlloc(prevAllocation, stopPrevAllocDesc, "", "")
 			}
@@ -626,7 +626,7 @@ func (s *GenericScheduler) computePlacements(destructive, place []placementResul
 			// Set fields based on if we found an allocation option
 			if option != nil {
 				// DEBUG
-				fmt.Printf("[*] found option\n")
+				//fmt.Printf("[*] found option\n")
 				resources := &structs.AllocatedResources{
 					Tasks:          option.TaskResources,
 					TaskLifecycles: option.TaskLifecycles,
@@ -713,7 +713,7 @@ func (s *GenericScheduler) computePlacements(destructive, place []placementResul
 
 			} else {
 				// DEBUG
-				fmt.Printf("[*] found no option\n")
+				//fmt.Printf("[*] found no option\n")
 
 				// Lazy initialize the failed map
 				if s.failedTGAllocs == nil {
