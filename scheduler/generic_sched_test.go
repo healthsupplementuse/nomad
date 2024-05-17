@@ -1945,14 +1945,22 @@ func TestServiceSched_JobModify(t *testing.T) {
 	if len(update) != len(allocs) {
 		t.Fatalf("bad: %#v", plan)
 	}
+	fmt.Println("--------------------------")
+	fmt.Println("updated")
+	for _, alloc := range update {
+		fmt.Printf("\t%s (%s/%s)\n", alloc.ID, alloc.DesiredStatus, alloc.ClientStatus)
+	}
 
 	// Ensure the plan allocated
 	var planned []*structs.Allocation
 	for _, allocList := range plan.NodeAllocation {
 		planned = append(planned, allocList...)
 	}
-	if len(planned) != 10 {
-		t.Fatalf("bad: %#v", plan)
+	must.Len(t, 10, planned, must.Sprintf("expected 10 planned allocs: %#v", plan))
+	fmt.Println("--------------------------")
+	fmt.Println("planned")
+	for _, alloc := range planned {
+		fmt.Printf("\t%s (%s/%s)\n", alloc.ID, alloc.DesiredStatus, alloc.ClientStatus)
 	}
 
 	// Lookup the allocations by JobID
@@ -1961,7 +1969,18 @@ func TestServiceSched_JobModify(t *testing.T) {
 	require.NoError(t, err)
 
 	// Ensure all allocations placed
-	out, _ = structs.FilterTerminalAllocs(out)
+	out, termMap := structs.FilterTerminalAllocs(out)
+
+	fmt.Println("--------------------------")
+	fmt.Println("non-terminal")
+	for _, alloc := range out {
+		fmt.Printf("\t%s (%s/%s)\n", alloc.ID, alloc.DesiredStatus, alloc.ClientStatus)
+	}
+	fmt.Println("terminal")
+	for _, alloc := range termMap {
+		fmt.Printf("\t%s (%s/%s)\n", alloc.ID, alloc.DesiredStatus, alloc.ClientStatus)
+	}
+
 	must.Len(t, 10, out, must.Sprint("expected 10 non-terminal allocs"))
 	// if len(out) != 10 {
 	// 	t.Fatalf("bad: %#v", out)
