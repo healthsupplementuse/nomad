@@ -3524,6 +3524,7 @@ func TestServiceSched_NodeDown(t *testing.T) {
 	ci.Parallel(t)
 
 	cases := []struct {
+		name       string
 		desired    string
 		client     string
 		migrate    bool
@@ -3532,36 +3533,44 @@ func TestServiceSched_NodeDown(t *testing.T) {
 		lost       bool
 	}{
 		{
+			name:    "should stop is running should be lost",
 			desired: structs.AllocDesiredStatusStop,
 			client:  structs.AllocClientStatusRunning,
 			lost:    true,
 		},
 		{
+			name:    "should run is pending should be migrate",
 			desired: structs.AllocDesiredStatusRun,
 			client:  structs.AllocClientStatusPending,
 			migrate: true,
 		},
 		{
+			name:    "should run is running should be migrate",
 			desired: structs.AllocDesiredStatusRun,
 			client:  structs.AllocClientStatusRunning,
 			migrate: true,
 		},
 		{
+			name:     "should run is lost should be terminal",
 			desired:  structs.AllocDesiredStatusRun,
 			client:   structs.AllocClientStatusLost,
 			terminal: true,
 		},
 		{
+			name:     "should run is complete should be terminal",
 			desired:  structs.AllocDesiredStatusRun,
 			client:   structs.AllocClientStatusComplete,
 			terminal: true,
 		},
 		{
+			name:       "should run is failed should not reschedule without room",
 			desired:    structs.AllocDesiredStatusRun,
 			client:     structs.AllocClientStatusFailed,
 			reschedule: true,
+			terminal:   false,
 		},
 		{
+			name:    "should evict is running should be lost",
 			desired: structs.AllocDesiredStatusEvict,
 			client:  structs.AllocClientStatusRunning,
 			lost:    true,
@@ -3569,17 +3578,17 @@ func TestServiceSched_NodeDown(t *testing.T) {
 	}
 
 	for i, tc := range cases {
-		t.Run(fmt.Sprintf(""), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			h := NewHarness(t)
 
 			// Register a node
 			node := mock.Node()
 			node.Status = structs.NodeStatusDown
-			require.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
+			must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
 
 			// Generate a fake job with allocations and an update policy.
 			job := mock.Job()
-			require.NoError(t, h.State.UpsertJob(structs.MsgTypeTestSetup, h.NextIndex(), nil, job))
+			must.NoError(t, h.State.UpsertJob(structs.MsgTypeTestSetup, h.NextIndex(), nil, job))
 
 			alloc := mock.Alloc()
 			alloc.Job = job
@@ -3594,7 +3603,7 @@ func TestServiceSched_NodeDown(t *testing.T) {
 			alloc.DesiredTransition.Migrate = pointer.Of(tc.migrate)
 
 			allocs := []*structs.Allocation{alloc}
-			require.NoError(t, h.State.UpsertAllocs(structs.MsgTypeTestSetup, h.NextIndex(), allocs))
+			must.NoError(t, h.State.UpsertAllocs(structs.MsgTypeTestSetup, h.NextIndex(), allocs))
 
 			// Create a mock evaluation to deal with drain
 			eval := &structs.Evaluation{
@@ -3606,31 +3615,30 @@ func TestServiceSched_NodeDown(t *testing.T) {
 				NodeID:      node.ID,
 				Status:      structs.EvalStatusPending,
 			}
-			require.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Evaluation{eval}))
+			must.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Evaluation{eval}))
 
 			// Process the evaluation
 			err := h.Process(NewServiceScheduler, eval)
-			require.NoError(t, err)
+			must.NoError(t, err)
 
 			if tc.terminal {
-				// No plan for terminal state allocs
-				require.Len(t, h.Plans, 0)
+				must.Len(t, 0, h.Plans, must.Sprint("expected no plan"))
 			} else {
-				require.Len(t, h.Plans, 1)
+				must.Len(t, 1, h.Plans, must.Sprint("expected plan"))
 
 				plan := h.Plans[0]
 				out := plan.NodeUpdate[node.ID]
-				require.Len(t, out, 1)
+				must.Len(t, 1, out)
 
 				outAlloc := out[0]
 				if tc.migrate {
-					require.NotEqual(t, structs.AllocClientStatusLost, outAlloc.ClientStatus)
+					must.NotEq(t, structs.AllocClientStatusLost, outAlloc.ClientStatus)
 				} else if tc.reschedule {
-					require.Equal(t, structs.AllocClientStatusFailed, outAlloc.ClientStatus)
+					must.Eq(t, structs.AllocClientStatusFailed, outAlloc.ClientStatus)
 				} else if tc.lost {
-					require.Equal(t, structs.AllocClientStatusLost, outAlloc.ClientStatus)
+					must.Eq(t, structs.AllocClientStatusLost, outAlloc.ClientStatus)
 				} else {
-					require.Fail(t, "unexpected alloc update")
+					t.Fatal("unexpected alloc update")
 				}
 			}
 
@@ -6028,8 +6036,8 @@ func TestServiceSched_NodeDrain_Sticky(t *testing.T) {
 	alloc.Job.TaskGroups[0].Count = 1
 	alloc.Job.TaskGroups[0].EphemeralDisk.Sticky = true
 	alloc.DesiredTransition.Migrate = pointer.Of(true)
-	require.NoError(t, h.State.UpsertJob(structs.MsgTypeTestSetup, h.NextIndex(), nil, alloc.Job))
-	require.NoError(t, h.State.UpsertAllocs(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Allocation{alloc}))
+	must.NoError(t, h.State.UpsertJob(structs.MsgTypeTestSetup, h.NextIndex(), nil, alloc.Job))
+	must.NoError(t, h.State.UpsertAllocs(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Allocation{alloc}))
 
 	// Create a mock evaluation to deal with drain
 	eval := &structs.Evaluation{
@@ -6042,33 +6050,25 @@ func TestServiceSched_NodeDrain_Sticky(t *testing.T) {
 		Status:      structs.EvalStatusPending,
 	}
 
-	require.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Evaluation{eval}))
+	must.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Evaluation{eval}))
 
 	// Process the evaluation
-	err := h.Process(NewServiceScheduler, eval)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
+	must.NoError(t, h.Process(NewServiceScheduler, eval))
 
 	// Ensure a single plan
-	if len(h.Plans) != 1 {
-		t.Fatalf("bad: %#v", h.Plans)
-	}
+	must.Len(t, 1, h.Plans, must.Sprint("expected plan"))
 	plan := h.Plans[0]
 
 	// Ensure the plan evicted all allocs
-	if len(plan.NodeUpdate[node.ID]) != 1 {
-		t.Fatalf("bad: %#v", plan)
-	}
+	must.Eq(t, 1, len(plan.NodeUpdate[node.ID]),
+		must.Sprint("expected alloc to be evicted"))
 
-	// Ensure the plan didn't create any new allocations
+	// Ensure the plan created a new allocation
 	var planned []*structs.Allocation
 	for _, allocList := range plan.NodeAllocation {
 		planned = append(planned, allocList...)
 	}
-	if len(planned) != 0 {
-		t.Fatalf("bad: %#v", plan)
-	}
+	must.Eq(t, 1, len(planned))
 
 	h.AssertEvalStatus(t, structs.EvalStatusComplete)
 }
