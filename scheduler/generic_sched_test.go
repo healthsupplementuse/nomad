@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/nomad/mock"
 	"github.com/hashicorp/nomad/nomad/structs"
+	"github.com/shoenig/test"
 	"github.com/shoenig/test/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3651,37 +3652,33 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 	ci.Parallel(t)
 
 	cases := []struct {
-		name        string
-		jobSpecFn   func(*structs.Job)
-		when        time.Time
-		rescheduled bool
+		name                string
+		jobSpecFn           func(*structs.Job)
+		previousStopWhen    time.Time
+		expectBlockedEval   bool
+		expectUpdate        bool
+		expectedAllocStates int
 	}{
 		// Test using stop_after_client_disconnect, remove after its deprecated  in favor
 		// of Disconnect.StopOnClientAfter introduced in 1.8.0.
 		{
-			name: "legacy no stop_after_client_disconnect with reschedule",
+			name: "legacy no stop_after_client_disconnect",
 			jobSpecFn: func(job *structs.Job) {
 				job.TaskGroups[0].Count = 1
 				job.TaskGroups[0].StopAfterClientDisconnect = nil
 			},
-			rescheduled: true,
+			expectBlockedEval:   true,
+			expectedAllocStates: 0,
 		},
 		{
-			name: "legacy stop_after_client_disconnect without reschedule",
+			name: "legacy stop_after_client_disconnect reschedule now",
 			jobSpecFn: func(job *structs.Job) {
 				job.TaskGroups[0].Count = 1
 				job.TaskGroups[0].StopAfterClientDisconnect = pointer.Of(1 * time.Second)
 			},
-			rescheduled: false,
-		},
-		{
-			name: "legacy stop_after_client_disconnect with reschedule",
-			jobSpecFn: func(job *structs.Job) {
-				job.TaskGroups[0].Count = 1
-				job.TaskGroups[0].StopAfterClientDisconnect = pointer.Of(1 * time.Second)
-			},
-			when:        time.Now().UTC().Add(-10 * time.Second),
-			rescheduled: true,
+			previousStopWhen:    time.Now().UTC().Add(-10 * time.Second),
+			expectBlockedEval:   true,
+			expectedAllocStates: 1,
 		},
 		{
 			name: "legacy stop_after_client_disconnect reschedule later",
@@ -3689,40 +3686,33 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 				job.TaskGroups[0].Count = 1
 				job.TaskGroups[0].StopAfterClientDisconnect = pointer.Of(1 * time.Second)
 			},
-			when:        time.Now().UTC().Add(10 * time.Minute),
-			rescheduled: false,
+			expectBlockedEval:   false,
+			expectUpdate:        true,
+			expectedAllocStates: 1,
 		},
 		// Tests using the new disconnect block
 		{
-			name: "no StopOnClientAfter with reschedule",
+			name: "no StopOnClientAfter reschedule now",
 			jobSpecFn: func(job *structs.Job) {
 				job.TaskGroups[0].Count = 1
 				job.TaskGroups[0].Disconnect = &structs.DisconnectStrategy{
 					StopOnClientAfter: nil,
 				}
 			},
-			rescheduled: true,
+			expectBlockedEval:   true,
+			expectedAllocStates: 0,
 		},
 		{
-			name: "StopOnClientAfter without reschedule",
+			name: "StopOnClientAfter reschedule now",
 			jobSpecFn: func(job *structs.Job) {
 				job.TaskGroups[0].Count = 1
 				job.TaskGroups[0].Disconnect = &structs.DisconnectStrategy{
 					StopOnClientAfter: pointer.Of(1 * time.Second),
 				}
 			},
-			rescheduled: false,
-		},
-		{
-			name: "StopOnClientAfter with reschedule",
-			jobSpecFn: func(job *structs.Job) {
-				job.TaskGroups[0].Count = 1
-				job.TaskGroups[0].Disconnect = &structs.DisconnectStrategy{
-					StopOnClientAfter: pointer.Of(1 * time.Second),
-				}
-			},
-			when:        time.Now().UTC().Add(-10 * time.Second),
-			rescheduled: true,
+			previousStopWhen:    time.Now().UTC().Add(-10 * time.Second),
+			expectBlockedEval:   true,
+			expectedAllocStates: 1,
 		},
 		{
 			name: "StopOnClientAfter reschedule later",
@@ -3732,8 +3722,9 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 					StopOnClientAfter: pointer.Of(1 * time.Second),
 				}
 			},
-			when:        time.Now().UTC().Add(10 * time.Minute),
-			rescheduled: false,
+			expectBlockedEval:   false,
+			expectUpdate:        true,
+			expectedAllocStates: 1,
 		},
 	}
 
@@ -3759,22 +3750,22 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 			alloc.Name = fmt.Sprintf("my-job.web[%d]", i)
 			alloc.DesiredStatus = structs.AllocDesiredStatusRun
 			alloc.ClientStatus = structs.AllocClientStatusRunning
-			if !tc.when.IsZero() {
+			if !tc.previousStopWhen.IsZero() {
 				alloc.AllocStates = []*structs.AllocState{{
 					Field: structs.AllocStateFieldClientStatus,
 					Value: structs.AllocClientStatusLost,
-					Time:  tc.when,
+					Time:  tc.previousStopWhen,
 				}}
 			}
-			allocs := []*structs.Allocation{alloc}
-			must.NoError(t, h.State.UpsertAllocs(structs.MsgTypeTestSetup, h.NextIndex(), allocs))
+			must.NoError(t, h.State.UpsertAllocs(
+				structs.MsgTypeTestSetup, h.NextIndex(), []*structs.Allocation{alloc}))
 
-			// Create a mock evaluation to deal with drain
+			// Create a mock evaluation to deal with node going down
 			evals := []*structs.Evaluation{{
 				Namespace:   structs.DefaultNamespace,
 				ID:          uuid.Generate(),
 				Priority:    50,
-				TriggeredBy: structs.EvalTriggerNodeDrain,
+				TriggeredBy: structs.EvalTriggerNodeUpdate,
 				JobID:       job.ID,
 				NodeID:      node.ID,
 				Status:      structs.EvalStatusPending,
@@ -3789,70 +3780,70 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 
 			// One followup eval created, either delayed or blocked
 			must.Len(t, 1, h.CreateEvals)
-			e := h.CreateEvals[0]
-			must.Eq(t, eval.ID, e.PreviousEval)
+			followupEval := h.CreateEvals[0]
+			must.Eq(t, eval.ID, followupEval.PreviousEval)
 
-			alloc, err = h.State.AllocByID(nil, alloc.ID)
+			// Either way, no new alloc was created
+			allocs, err := h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
 			must.NoError(t, err)
+			must.Len(t, 1, allocs)
+			must.Eq(t, alloc.ID, allocs[0].ID)
+			alloc = allocs[0]
 
-			if tc.rescheduled {
-				must.Eq(t, "blocked", e.Status)
+			// 1 if rescheduled, 2 for rescheduled later
+			test.Len(t, tc.expectedAllocStates, alloc.AllocStates)
 
-				// Allocations have not been transitioned to lost
+			if tc.expectBlockedEval {
+				must.Eq(t, structs.EvalStatusBlocked, followupEval.Status)
+				must.Len(t, 0, h.Plans, must.Sprint("expected no plan"))
+
+				// Unreplaced allocations have not been transitioned to lost
 				must.Eq(t, structs.AllocDesiredStatusRun, alloc.DesiredStatus)
 				must.Eq(t, structs.AllocClientStatusRunning, alloc.ClientStatus)
-
-				// At least 1, 2 if we manually set the tc.when
-				//				must.SliceEmpty(t, alloc.AllocStates)
-
 			} else {
+				must.Eq(t, structs.EvalStatusPending, followupEval.Status)
 				must.Len(t, 1, h.Plans, must.Sprint("expected a plan"))
-				must.Eq(t, "pending", e.Status)
-				must.NotEq(t, time.Time{}, e.WaitUntil)
+				must.NotEq(t, time.Time{}, followupEval.WaitUntil)
+
+				if tc.expectUpdate {
+					must.Len(t, 1, h.Plans[0].NodeUpdate[node.ID])
+					must.Eq(t, structs.AllocClientStatusLost,
+						h.Plans[0].NodeUpdate[node.ID][0].ClientStatus)
+					must.MapLen(t, 0, h.Plans[0].NodeAllocation)
+				} else {
+					must.Len(t, 0, h.Plans[0].NodeUpdate[node.ID])
+					must.MapLen(t, 1, h.Plans[0].NodeAllocation)
+				}
 
 				// Allocations have been transitioned to lost
 				must.Eq(t, structs.AllocDesiredStatusStop, alloc.DesiredStatus)
 				must.Eq(t, structs.AllocClientStatusLost, alloc.ClientStatus)
-
-				// At least 1, 2 if we manually set the tc.when
-				must.SliceNotEmpty(t, alloc.AllocStates)
 			}
 
-			if tc.rescheduled {
-				// Register a new node, leave it up, process the followup eval
-				node = mock.Node()
-				must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
-				must.NoError(t, h.Process(NewServiceScheduler, eval))
+			// Register a new node, leave it up, process the followup eval
+			node = mock.Node()
+			must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
+			must.NoError(t, h.State.UpsertEvals(structs.MsgTypeTestSetup, h.NextIndex(),
+				[]*structs.Evaluation{followupEval}))
+			must.NoError(t, h.Process(NewServiceScheduler, followupEval))
 
-				as, err := h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
-				must.NoError(t, err)
-				must.Len(t, 2, as)
+			allocs, err = h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
+			must.NoError(t, err)
+			must.Len(t, 2, allocs)
 
-				a2 := as[0]
-				if a2.ID == alloc.ID {
-					a2 = as[1]
-				}
-
-				must.Eq(t, structs.AllocClientStatusPending, a2.ClientStatus)
-				must.Eq(t, structs.AllocDesiredStatusRun, a2.DesiredStatus)
-				must.Eq(t, node.ID, a2.NodeID)
-
-				// No blocked evals
-				must.SliceEmpty(t, h.ReblockEvals)
-				must.Len(t, 1, h.CreateEvals)
-				must.Eq(t, h.CreateEvals[0].ID, e.ID)
-			} else {
-				// No new alloc was created
-				as, err := h.State.AllocsByJob(nil, job.Namespace, job.ID, false)
-				must.NoError(t, err)
-
-				must.Len(t, 1, as)
-				old := as[0]
-
-				must.Eq(t, alloc.ID, old.ID)
-				must.Eq(t, structs.AllocClientStatusLost, old.ClientStatus)
-				must.Eq(t, structs.AllocDesiredStatusStop, old.DesiredStatus)
+			alloc2 := allocs[0]
+			if alloc2.ID == alloc.ID {
+				alloc2 = allocs[1]
 			}
+
+			must.Eq(t, structs.AllocClientStatusPending, alloc2.ClientStatus)
+			must.Eq(t, structs.AllocDesiredStatusRun, alloc2.DesiredStatus)
+			must.Eq(t, node.ID, alloc2.NodeID)
+
+			// No more follow-up evals
+			must.SliceEmpty(t, h.ReblockEvals)
+			must.Len(t, 1, h.CreateEvals)
+			must.Eq(t, h.CreateEvals[0].ID, followupEval.ID)
 		})
 	}
 }
