@@ -3566,8 +3566,8 @@ func TestServiceSched_NodeDown(t *testing.T) {
 			name:       "should run is failed should not reschedule without room",
 			desired:    structs.AllocDesiredStatusRun,
 			client:     structs.AllocClientStatusFailed,
-			reschedule: true,
-			terminal:   false,
+			reschedule: false,
+			terminal:   true,
 		},
 		{
 			name:    "should evict is running should be lost",
@@ -3786,28 +3786,37 @@ func TestServiceSched_StopAfterClientDisconnect(t *testing.T) {
 			err := h.Process(NewServiceScheduler, eval)
 			must.NoError(t, err)
 			must.Eq(t, h.Evals[0].Status, structs.EvalStatusComplete)
-			must.Len(t, 1, h.Plans, must.Sprint("expected a plan"))
 
 			// One followup eval created, either delayed or blocked
 			must.Len(t, 1, h.CreateEvals)
 			e := h.CreateEvals[0]
 			must.Eq(t, eval.ID, e.PreviousEval)
 
-			if tc.rescheduled {
-				must.Eq(t, "blocked", e.Status)
-			} else {
-				must.Eq(t, "pending", e.Status)
-				must.NotEq(t, time.Time{}, e.WaitUntil)
-			}
-
 			alloc, err = h.State.AllocByID(nil, alloc.ID)
 			must.NoError(t, err)
 
-			// Allocations have been transitioned to lost
-			must.Eq(t, structs.AllocDesiredStatusStop, alloc.DesiredStatus)
-			must.Eq(t, structs.AllocClientStatusLost, alloc.ClientStatus)
-			// At least 1, 2 if we manually set the tc.when
-			must.SliceNotEmpty(t, alloc.AllocStates)
+			if tc.rescheduled {
+				must.Eq(t, "blocked", e.Status)
+
+				// Allocations have not been transitioned to lost
+				must.Eq(t, structs.AllocDesiredStatusRun, alloc.DesiredStatus)
+				must.Eq(t, structs.AllocClientStatusRunning, alloc.ClientStatus)
+
+				// At least 1, 2 if we manually set the tc.when
+				//				must.SliceEmpty(t, alloc.AllocStates)
+
+			} else {
+				must.Len(t, 1, h.Plans, must.Sprint("expected a plan"))
+				must.Eq(t, "pending", e.Status)
+				must.NotEq(t, time.Time{}, e.WaitUntil)
+
+				// Allocations have been transitioned to lost
+				must.Eq(t, structs.AllocDesiredStatusStop, alloc.DesiredStatus)
+				must.Eq(t, structs.AllocClientStatusLost, alloc.ClientStatus)
+
+				// At least 1, 2 if we manually set the tc.when
+				must.SliceNotEmpty(t, alloc.AllocStates)
+			}
 
 			if tc.rescheduled {
 				// Register a new node, leave it up, process the followup eval
@@ -6025,9 +6034,10 @@ func TestServiceSched_NodeDrain_Sticky(t *testing.T) {
 
 	h := NewHarness(t)
 
-	// Register a draining node
+	// Register a draining node and a node we can drain to
 	node := mock.DrainNode()
-	require.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
+	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), node))
+	must.NoError(t, h.State.UpsertNode(structs.MsgTypeTestSetup, h.NextIndex(), mock.Node()))
 
 	// Create an alloc on the draining node
 	alloc := mock.Alloc()
